@@ -89,7 +89,7 @@ def login():
         "exp": datetime.utcnow() + timedelta(hours=24)
     }
     token=jwt.encode(payload, SECRET_KEY, algorithm='HS256')
-    return jsonify({'status': 'success', 'message': 'Login realizado', 'token': token}), 200
+    return jsonify({'status': 'success', 'message': 'Login realizado', 'token': token, 'login': user['login']}), 200
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
@@ -208,6 +208,10 @@ def save():
     cursor.close()
     conn.close()
     return jsonify({"status": "success", "message": "Dados salvos com sucesso!!!"}), 200
+
+@app.route('/status', methods=['GET'])
+def get_status():
+     return jsonify({"status": "success", "message": "API online"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
