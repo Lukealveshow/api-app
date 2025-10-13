@@ -11,8 +11,12 @@ import jwt
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
+from flask_socketio import SocketIO, emit
+import time
+import threading
 
 app = Flask(__name__)
+socketio=SocketIO(app, cors_allowed_origins="*")
 load_dotenv()
 db_config = {
     'host' : os.getenv("DB_HOST"),
@@ -213,5 +217,20 @@ def save():
 def get_status():
      return jsonify({"status": "success", "message": "API online"}), 200
 
+api_online=False
+def monitor_api():
+    global api_online
+    while True:
+        try:
+            current_status=True
+        except:
+            current_status=False
+        
+        if current_status!=api_online:
+            api_online=current_status
+            socketio.emit('api_status', {'online': api_online})
+        time.sleep(5)
+threading.Thread(target=monitor_api, daemon=True).start()
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    socketio.run(app, debug=True)
