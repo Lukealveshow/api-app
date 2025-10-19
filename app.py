@@ -226,6 +226,10 @@ def forgot_password():
     if not user:
         conn.close()
         return jsonify({"status": "error", "message": "Email não encontrado"}), 404
+    
+    if user["verified"] != 1:
+        conn.close()
+        return jsonify({"status": "error", "message": "E-mail não verificado"}), 403
 
     recovery_code = str(random.randint(100000, 999999))
     cursor.execute("UPDATE user SET code=%s WHERE email=%s", (recovery_code, email))
