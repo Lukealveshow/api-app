@@ -213,6 +213,56 @@ def save():
     conn.close()
     return jsonify({"status": "success", "message": "Dados salvos com sucesso!!!"}), 200
 
+@app.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    email = data.get("email")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM user WHERE email=%s", (email,))
+    user = cursor.fetchone()
+
+    if not user:
+        conn.close()
+        return jsonify({"status": "error", "message": "Email não encontrado"}), 404
+
+    recovery_code = str(random.randint(100000, 999999))
+    cursor.execute("UPDATE user SET code=%s WHERE email=%s", (recovery_code, email))
+    conn.commit()
+    conn.close()
+
+    send_verification_email(email, recovery_code)  
+
+    return jsonify({"status": "success", "message": "Código enviado para o email"}), 200
+
+@app.route('/reset-password', methods=['POST'])
+def reset_password():
+    data = request.json
+    email = data.get("email")
+    code = data.get("code")
+    new_password = data.get("new_password")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM user WHERE email=%s", (email,))
+    user = cursor.fetchone()
+
+    if not user:
+        conn.close()
+        return jsonify({"status": "error", "message": "Usuário não encontrado"}), 404
+
+    if user["code"] != code:
+        conn.close()
+        return jsonify({"status": "error", "message": "Código inválido"}), 400
+
+    cursor.execute("UPDATE user SET password=%s WHERE email=%s", (new_password, email))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"status": "success", "message": "Senha redefinida com sucesso"}), 200
+
+
 @app.route('/status', methods=['GET'])
 def get_status():
      return jsonify({"status": "success", "message": "API online"}), 200
