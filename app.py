@@ -266,6 +266,49 @@ def reset_password():
 
     return jsonify({"status": "success", "message": "Senha redefinida com sucesso"}), 200
 
+@app.route('/user', methods=['GET'])
+def get_user_data():
+    token = request.headers.get("Authorization")
+
+    if not token:
+        return jsonify({"status": "error", "message": "Token não fornecido"}), 401
+
+    try:
+        user_id = get_user_id_jwt(token)
+    except ValueError as e:
+        return jsonify({"status": "error", "message": str(e)}), 401
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, login, email, verified, password FROM user WHERE id=%s",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+    conn.close()
+
+    if not user:
+        return jsonify({"status": "error", "message": "Usuário não encontrado"}), 404
+    if isinstance(user, dict):
+        user_data = {
+            "id": user["id"],
+            "login": user["login"],
+            "email": user["email"],
+            "verified": bool(user["verified"]),
+            "password": user["password"]
+        }
+    else:
+        user_data = {
+            "id": user[0],
+            "login": user[1],
+            "email": user[2],
+            "verified": bool(user[3]),
+            "password": user[4]
+        }
+
+    return jsonify({"status": "success", "user": user_data}), 200
 
 @app.route('/status', methods=['GET'])
 def get_status():
