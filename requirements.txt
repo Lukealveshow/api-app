@@ -8,3 +8,5 @@ torch==2.2.0
 deep-translator==1.11.4
 PyJWT==2.9.0
 requests==2.32.3
+numpy<2
+uvicorn==0.38.0

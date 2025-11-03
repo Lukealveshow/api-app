@@ -3,7 +3,6 @@ import pymysql
 import random
 import smtplib
 from email.mime.text import MIMEText
-from flask import Flask, request, jsonify
 from summarization import summarize_text
 from generation import generate_answer
 from translation import translate_text
@@ -14,20 +13,26 @@ import os
 from flask_socketio import SocketIO, emit
 import time
 import threading
+import uvicorn
 
 app = Flask(__name__)
-socketio=SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='asgi')
 load_dotenv()
+
 db_config = {
-    'host' : os.getenv("DB_HOST"),
-    'user' : os.getenv("DB_USER"),
-    'port' : int(os.getenv("DB_PORT")),
+    'host': os.getenv("DB_HOST"),
+    'user': os.getenv("DB_USER"),
+    'port': int(os.getenv("DB_PORT", 3306)),
     'password': os.getenv("DB_PASSWORD"),
     'database': os.getenv("DB_NAME")
 }
-SECRET_KEY=os.getenv("SECRET_KEY")
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY não configurado!")
+
 def get_connection():
-    conn = pymysql.connect(
+    return pymysql.connect(
         host=db_config['host'],
         user=db_config['user'],
         passwd=db_config['password'],
@@ -35,15 +40,15 @@ def get_connection():
         port=db_config['port'],
         cursorclass=pymysql.cursors.DictCursor
     )
-    return conn
-def get_user_id_jwt(token):
+
+def get_user_id_jwt(token: str):
     if token.startswith('Bearer'):
-        token=token[7:]
+        token = token[7:]
     else:
         raise ValueError("Token inválido!!!")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        user_id=payload.get('user_id')
+        user_id = payload.get('user_id')
         if not user_id:
             raise ValueError("User ID não encontrado no token!!!")
         return user_id
@@ -51,13 +56,14 @@ def get_user_id_jwt(token):
         raise ValueError("Token Expirado!!!")
     except jwt.InvalidTokenError:
         raise ValueError("Token inválido!!!")
-def send_verification_email(to_email, code):
-    smtp_server='smtp.gmail.com'
-    smtp_port=587
-    smtp_user=os.getenv("SMTP_USER")
-    smtp_password=os.getenv("SMTP_PASSWORD")
 
-    msg = MIMEText(f'seu código de verificação é: {code}')
+def send_verification_email(to_email: str, code: str):
+    smtp_server = 'smtp.gmail.com'
+    smtp_port = 587
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    msg = MIMEText(f'Seu código de verificação é: {code}')
     msg["Subject"] = "Confirmação de cadastro MAKENLP"
     msg["From"] = smtp_user
     msg["To"] = to_email
@@ -76,10 +82,7 @@ def login():
 
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM user WHERE login=%s",
-        (login,)
-    )
+    cursor.execute("SELECT * FROM user WHERE login=%s", (login,))
     user = cursor.fetchone()
     conn.close()
 
@@ -87,17 +90,18 @@ def login():
         return jsonify({'status': 'error', 'message': 'Usuário não cadastrado'}), 404
     if user['password'] != password:
         return jsonify({'status': 'error', 'message': 'Senha incorreta'}), 401
-    
+
     payload = {
         "user_id": user["id"],
         "exp": datetime.utcnow() + timedelta(hours=24)
     }
-    token=jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+    token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
     return jsonify({'status': 'success', 'message': 'Login realizado', 'token': token, 'login': user['login']}), 200
+
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    login=data.get("login")
+    login = data.get("login")
     email = data.get("email")
     password = data.get("password")
 
@@ -113,13 +117,12 @@ def register():
     verification_code = str(random.randint(100000, 999999))
     cursor.execute(
         "INSERT INTO user (login,email, password, code, verified) VALUES (%s, %s, %s, %s, %s)",
-        (login,email, password, verification_code, 0)
+        (login, email, password, verification_code, 0)
     )
     conn.commit()
     conn.close()
 
     send_verification_email(email, verification_code)
-
     return jsonify({"status": "success", "message": "Usuário criado, código enviado para o email"}), 201
 
 @app.route('/verify', methods=['POST'])
@@ -136,7 +139,6 @@ def verify():
     if not user:
         conn.close()
         return jsonify({"status": "error", "message": "Usuário não encontrado"}), 404
-
     if user["code"] != code:
         conn.close()
         return jsonify({"status": "error", "message": "Código incorreto"}), 400
@@ -144,7 +146,6 @@ def verify():
     cursor.execute("UPDATE user SET verified=1 WHERE email=%s", (email,))
     conn.commit()
     conn.close()
-
     return jsonify({"status": "success", "message": "Email verificado"}), 200
 
 @app.route('/summarize', methods=['POST'])
@@ -156,7 +157,6 @@ def summarize():
     summary = summarize_text(text)
     return jsonify({"status": "success", "summary": summary}), 200
 
-
 @app.route('/answer', methods=['POST'])
 def answer():
     data = request.json
@@ -166,7 +166,6 @@ def answer():
         return jsonify({"status": "error", "message": "Contexto ou pergunta faltando"}), 400
     answer = generate_answer(question, context)
     return jsonify({"status": "success", "answer": answer}), 200
-
 
 @app.route('/translate', methods=['POST'])
 def translate():
@@ -178,156 +177,26 @@ def translate():
     translated_text = translate_text(text, language)
     return jsonify({"status": "success", "translated": translated_text}), 200
 
-@app.route('/save', methods=['POST'])
-def save():
-    data=request.json
-    text = data.get("text")
-    summary = data.get("summary")
-    context = data.get("context")
-    answer = data.get("answer")
-    question = data.get("question")
-    translation = data.get("translation")
-    language = data.get("language")
-    translated_text = data.get("translated_text")
-    token = request.headers.get("Authorization")
-    if not token:
-        return jsonify({"status": "error", "message": "Token não fornecido"}), 401
-
-    try:
-        user_id = get_user_id_jwt(token)
-    except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 401
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO app_dados (user_id, text_summarization, summarized_text, text_generation, question, answer, text_translation, language, translated_text)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (user_id, text, summary, context, answer, question, translation, language, translated_text)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return jsonify({"status": "success", "message": "Dados salvos com sucesso!!!"}), 200
-
-@app.route('/forgot-password', methods=['POST'])
-def forgot_password():
-    data = request.json
-    email = data.get("email")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM user WHERE email=%s", (email,))
-    user = cursor.fetchone()
-
-    if not user:
-        conn.close()
-        return jsonify({"status": "error", "message": "Email não encontrado"}), 404
-    
-    if user["verified"] != 1:
-        conn.close()
-        return jsonify({"status": "error", "message": "E-mail não verificado"}), 403
-
-    recovery_code = str(random.randint(100000, 999999))
-    cursor.execute("UPDATE user SET code=%s WHERE email=%s", (recovery_code, email))
-    conn.commit()
-    conn.close()
-
-    send_verification_email(email, recovery_code)  
-
-    return jsonify({"status": "success", "message": "Código enviado para o email"}), 200
-
-@app.route('/reset-password', methods=['POST'])
-def reset_password():
-    data = request.json
-    email = data.get("email")
-    code = data.get("code")
-    new_password = data.get("new_password")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM user WHERE email=%s", (email,))
-    user = cursor.fetchone()
-
-    if not user:
-        conn.close()
-        return jsonify({"status": "error", "message": "Usuário não encontrado"}), 404
-
-    if user["code"] != code:
-        conn.close()
-        return jsonify({"status": "error", "message": "Código inválido"}), 400
-
-    cursor.execute("UPDATE user SET password=%s WHERE email=%s", (new_password, email))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"status": "success", "message": "Senha redefinida com sucesso"}), 200
-
-@app.route('/user', methods=['GET'])
-def get_user_data():
-    token = request.headers.get("Authorization")
-
-    if not token:
-        return jsonify({"status": "error", "message": "Token não fornecido"}), 401
-
-    try:
-        user_id = get_user_id_jwt(token)
-    except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 401
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT id, login, email, verified, password FROM user WHERE id=%s",
-        (user_id,)
-    )
-
-    user = cursor.fetchone()
-    conn.close()
-
-    if not user:
-        return jsonify({"status": "error", "message": "Usuário não encontrado"}), 404
-    if isinstance(user, dict):
-        user_data = {
-            "id": user["id"],
-            "login": user["login"],
-            "email": user["email"],
-            "verified": bool(user["verified"]),
-            "password": user["password"]
-        }
-    else:
-        user_data = {
-            "id": user[0],
-            "login": user[1],
-            "email": user[2],
-            "verified": bool(user[3]),
-            "password": user[4]
-        }
-
-    return jsonify({"status": "success", "user": user_data}), 200
-
 @app.route('/status', methods=['GET'])
 def get_status():
-     return jsonify({"status": "success", "message": "API online"}), 200
+    return jsonify({"status": "success", "message": "API online"}), 200
+api_online = False
 
-api_online=False
 def monitor_api():
     global api_online
     while True:
-        try:
-            current_status=True
-        except:
-            current_status=False
-        
-        if current_status!=api_online:
-            api_online=current_status
+        current_status = True
+        if current_status != api_online:
+            api_online = current_status
             socketio.emit('api_status', {'online': api_online})
         time.sleep(5)
 threading.Thread(target=monitor_api, daemon=True).start()
+asgi_app = socketio.asgi_app
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    uvicorn.run(
+        asgi_app,
+        host="0.0.0.0",
+        port=8000,
+        reload=False
+    )
