@@ -16,7 +16,7 @@ import threading
 import uvicorn
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='asgi')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 load_dotenv()
 
 db_config = {
@@ -191,12 +191,6 @@ def monitor_api():
             socketio.emit('api_status', {'online': api_online})
         time.sleep(5)
 threading.Thread(target=monitor_api, daemon=True).start()
-asgi_app = socketio.asgi_app
 
 if __name__ == '__main__':
-    uvicorn.run(
-        asgi_app,
-        host="0.0.0.0",
-        port=8000,
-        reload=False
-    )
+    socketio.run(app, host="0.0.0.0", port=8080)
